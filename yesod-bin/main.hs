@@ -4,13 +4,15 @@ module Main (main) where
 
 import           Control.Monad          (unless)
 import           Data.Monoid
+import           Data.Maybe             (fromMaybe)
 import           Data.Version           (showVersion)
+import           Data.Default.Class     (def)
 import           Options.Applicative
 import           System.Environment     (getEnvironment)
 import           System.Exit            (ExitCode (ExitSuccess), exitWith, exitFailure)
 import           System.Process         (rawSystem)
 
-import           AddHandler             (addHandler)
+import           AddHandler             (addHandler, AddHandlerConfig(..))
 import           Devel                  (DevelOpts (..), devel, develSignal)
 import           Keter                  (keter)
 import           Options                (injectDefaults)
@@ -59,9 +61,13 @@ data Command = Init [String]
              | DevelSignal
              | Test
              | AddHandler
-                    { addHandlerRoute   :: Maybe String
-                    , addHandlerPattern :: Maybe String
-                    , addHandlerMethods :: [String]
+                    { addHandlerRoute    :: Maybe String
+                    , addHandlerPattern  :: Maybe String
+                    , addHandlerMethods  :: [String]
+                    , addApplicationFile :: Maybe String
+                    , addHandlerDir      :: Maybe String
+                    , addRouteFile       :: Maybe String
+                    , addTestHandlerDir  :: Maybe String
                     }
              | Keter
                     { _keterNoRebuild :: Bool
@@ -101,6 +107,20 @@ main = do
     Keter{..}       -> keter (cabalCommand o) _keterNoRebuild _keterNoCopyTo _keterBuildArgs
     Version         -> putStrLn ("yesod-bin version: " ++ showVersion Paths_yesod_bin.version)
     AddHandler{..}  -> addHandler addHandlerRoute addHandlerPattern addHandlerMethods
+                       $ AddHandlerConfig
+                           { applicationFile = fromMaybe
+                                                 (applicationFile def)
+                                                 addApplicationFile
+                           , handlerDir      = fromMaybe
+                                                 (handlerDir def)
+                                                 addHandlerDir
+                           , routesFile      = fromMaybe
+                                                 (routesFile def)
+                                                 addRouteFile
+                           , testHandlerDir  = fromMaybe
+                                                 (testHandlerDir def)
+                                                 addTestHandlerDir
+                           }
     Test            -> cabalTest cabal
     Devel{..}       -> devel DevelOpts
                              { verbose      = optVerbose o
@@ -213,6 +233,14 @@ addHandlerOptions = AddHandler
     <*> many (strOption ( long "method" <> short 'm' <> metavar "METHOD"
                  <> help "Takes one method. Use this multiple times to add multiple methods. Defaults to none.")
              )
+    <*> optStr ( long "application" <> short 'a' <> metavar "APPLICATION.hs"
+           <> help "Path to Application.hs. Defaults to \"Application.hs\".")
+    <*> optStr ( long "handler" <> short 'n' <> metavar "HANDLER_DIR"
+           <> help "Path to Handler dir. Defaults to \"Handler/\".")
+    <*> optStr ( long "route-file" <> short 'o' <> metavar "ROUTE_FILE"
+           <> help "Path to routes file. Defaults to \"config/routes\".")
+    <*> optStr ( long "test-handler" <> short 't' <> metavar "TEST_HANDLER"
+           <> help "Path to test handler dir. Defaults to \"test/Handler/\".")
 
 -- | Optional @String@ argument
 optStr :: Mod OptionFields (Maybe String) -> Parser (Maybe String)

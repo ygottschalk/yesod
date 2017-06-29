@@ -1,14 +1,17 @@
-{-# LANGUAGE PatternGuards #-}
-module AddHandler (addHandler) where
+{-# LANGUAGE PatternGuards   #-}
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE NamedFieldPuns  #-}
+module AddHandler (addHandler, AddHandlerConfig(..)) where
 
 import Prelude hiding (readFile)
 import System.IO  (hFlush, stdout)
 import Data.Char  (isLower, toLower, isSpace)
 import Data.List  (isPrefixOf, isSuffixOf, stripPrefix)
 import Data.Maybe (fromMaybe)
+import Data.Default.Class (Default(..))
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
-import System.Directory (getDirectoryContents, doesFileExist)
+import System.Directory (getDirectoryContents, doesFileExist, doesDirectoryExist)
 import Control.Monad (unless)
 
 data RouteError = EmptyRoute
@@ -21,6 +24,21 @@ instance Show RouteError where
     show RouteCaseError     = "Name must start with an upper case letter"
     show (RouteExists file) = "File already exists: " ++ file
 
+
+data AddHandlerConfig = AddHandlerConfig
+                      { handlerDir      :: FilePath
+                      , applicationFile :: FilePath
+                      , routesFile      :: FilePath
+                      , testHandlerDir  :: FilePath
+                      } deriving (Show, Eq)
+
+instance Default AddHandlerConfig where
+        def = AddHandlerConfig { handlerDir      = "Handler/"
+                               , applicationFile = "Application.hs"
+                               , routesFile      = "config/routes"
+                               , testHandlerDir  = "test/Handler/"
+                               }
+
 -- strict readFile
 readFile :: FilePath -> IO String
 readFile = fmap T.unpack . TIO.readFile
@@ -28,33 +46,34 @@ readFile = fmap T.unpack . TIO.readFile
 cmdLineArgsError :: String
 cmdLineArgsError = "You have to specify a route name if you want to add handler with command line arguments."
 
-addHandler :: Maybe String -> Maybe String -> [String] -> IO ()
-addHandler (Just route) pat met = do
+addHandler :: Maybe String -> Maybe String -> [String] -> AddHandlerConfig -> IO ()
+addHandler (Just route) pat met config = do
+    _ <- checkConfig config
     cabal <- getCabal
-    checked <- checkRoute route
+    checked <- checkRoute route config
     let routePair = case checked of
           Left err@EmptyRoute -> (error . show) err
           Left err@RouteCaseError -> (error . show) err
           Left err@(RouteExists _) -> (error . show) err
           Right p -> p
 
-    addHandlerFiles cabal routePair pattern methods
+    addHandlerFiles cabal routePair pattern methods config
   where
     pattern = fromMaybe "" pat -- pattern defaults to ""
     methods = unwords met      -- methods default to none
 
-addHandler Nothing (Just _) _ = error cmdLineArgsError
-addHandler Nothing _ (_:_)    = error cmdLineArgsError
-addHandler _ _ _ = addHandlerInteractive
+addHandler Nothing (Just _) _ _ = error cmdLineArgsError
+addHandler Nothing _ (_:_)    _ = error cmdLineArgsError
+addHandler _ _ _ config = addHandlerInteractive config
 
-addHandlerInteractive :: IO ()
-addHandlerInteractive = do
+addHandlerInteractive :: AddHandlerConfig -> IO ()
+addHandlerInteractive config = do
     cabal <- getCabal
     let routeInput = do
         putStr "Name of route (without trailing R): "
         hFlush stdout
         name <- getLine
-        checked <- checkRoute name
+        checked <- checkRoute name config
         case checked of
             Left err@EmptyRoute -> (error . show) err
             Left err@RouteCaseError -> print err >> routeInput
@@ -71,19 +90,20 @@ addHandlerInteractive = do
     putStr "Enter space-separated list of methods (ex: GET POST): "
     hFlush stdout
     methods <- getLine
-    addHandlerFiles cabal routePair pattern methods
+    addHandlerFiles cabal routePair pattern methods config
 
-addHandlerFiles :: FilePath -> (String, FilePath) -> String -> String -> IO ()
-addHandlerFiles cabal (name, handlerFile) pattern methods = do
-    modify "Application.hs" $ fixApp name
+addHandlerFiles :: FilePath -> (String, FilePath) -> String -> String
+                -> AddHandlerConfig -> IO ()
+addHandlerFiles cabal (name, handlerFile) pattern methods AddHandlerConfig{..} = do
+    modify applicationFile $ fixApp name
     modify cabal $ fixCabal name
-    modify "config/routes" $ fixRoutes name pattern methods
+    modify routesFile $ fixRoutes name pattern methods
     writeFile handlerFile $ mkHandler name pattern methods
     specExists <- doesFileExist specFile
     unless specExists $
       writeFile specFile $ mkSpec name pattern methods
   where
-    specFile = "test/Handler/" ++ name ++ "Spec.hs"
+    specFile = testHandlerDir ++ name ++ "Spec.hs"
     modify fp f = readFile fp >>= writeFile fp . f
 
 getCabal :: IO FilePath
@@ -94,19 +114,52 @@ getCabal = do
         [] -> error "No cabal file found"
         _ -> error "Too many cabal files found"
 
-checkRoute :: String -> IO (Either RouteError (String, FilePath))
-checkRoute name =
+checkRoute :: String -> AddHandlerConfig -> IO (Either RouteError (String, FilePath))
+checkRoute name AddHandlerConfig{ handlerDir } =
     case name of
         [] -> return $ Left EmptyRoute
         c:_
             | isLower c -> return $ Left RouteCaseError
             | otherwise -> do
                 -- Check that the handler file doesn't already exist
-                let handlerFile = concat ["Handler/", name, ".hs"]
+                let handlerFile = concat [handlerDir, name, ".hs"]
                 exists <- doesFileExist handlerFile
                 if exists
                     then (return . Left . RouteExists) handlerFile
                     else return $ Right (name, handlerFile)
+
+-- This will check the config and return it untouched
+-- or crashes with an error message
+checkConfig :: AddHandlerConfig -> IO AddHandlerConfig
+checkConfig AddHandlerConfig{..} = do
+    valididateHandlerDir
+    valididateRoutesFile
+    valididateApplicationFile
+    valididateTestHandlerDir
+    return AddHandlerConfig{..}
+
+    where
+      (<>) = mappend
+      valididateHandlerDir = do
+        exists <- doesDirectoryExist handlerDir
+        if exists && '/' == last handlerDir
+           then return ()
+           else error $ "Handler Directory does not exist or is maleformed (missing a trailing / ?) '" <> handlerDir <> "'"
+      valididateApplicationFile = do
+        exists <- doesFileExist applicationFile
+        if exists
+           then return ()
+           else error $ "Application file does not exist '" <> applicationFile <> "'"
+      valididateRoutesFile = do
+        exists <- doesFileExist routesFile
+        if exists
+           then return ()
+           else error $ "Routes file does not exist '" <> routesFile <> "'"
+      valididateTestHandlerDir = do
+        exists <- doesDirectoryExist testHandlerDir
+        if exists && '/' == last testHandlerDir
+           then return ()
+           else error $ "Test Handler Directory does not exist or is maleformed (missing a trailing / ?) '" <> testHandlerDir <> "'"
 
 fixApp :: String -> String -> String
 fixApp name =
