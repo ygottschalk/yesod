@@ -1,14 +1,14 @@
 {-# LANGUAGE PatternGuards   #-}
 {-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE NamedFieldPuns  #-}
 module AddHandler (addHandler, AddHandlerConfig(..)) where
 
 import Prelude hiding (readFile)
-import System.IO  (hFlush, stdout)
-import Data.Char  (isLower, toLower, isSpace)
-import Data.List  (isPrefixOf, isSuffixOf, stripPrefix)
-import Data.Maybe (fromMaybe)
-import Data.Default.Class (Default(..))
+import Data.Monoid ((<>))
+import System.IO   (hFlush, stdout)
+import Data.Char   (isLower, toLower, isSpace)
+import Data.List   (isPrefixOf, isSuffixOf, stripPrefix)
+import Data.Maybe  (fromMaybe)
+import Data.Default.Class (Default(def))
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import System.Directory (getDirectoryContents, doesFileExist, doesDirectoryExist)
@@ -46,10 +46,10 @@ data ConfigError = HandlerDirNotExists      { path :: String }
                  | TestHandlerDirNotExists  { path :: String }
 
 instance Show ConfigError where
-    show (HandlerDirNotExists      dir)  = "Handler Directory does not exist '" ++ dir ++ "'"
-    show (ApplicationFileNotExists file) = "Application file does not exist '" ++ file ++ "'"
-    show (RoutesFileNotExists      file) = "Routes file does not exist '" ++ file ++ "'"
-    show (TestHandlerDirNotExists  dir)  = "Test Handler Directory does not exist '" ++ dir ++ "'"
+    show (HandlerDirNotExists      dir)  = "Handler Directory does not exist '" <> dir <> "'"
+    show (ApplicationFileNotExists file) = "Application file does not exist '" <> file <> "'"
+    show (RoutesFileNotExists      file) = "Routes file does not exist '" <> file <> "'"
+    show (TestHandlerDirNotExists  dir)  = "Test Handler Directory does not exist '" <> dir <> "'"
 
 
 -- strict readFile
@@ -130,7 +130,7 @@ getCabal = do
         _ -> error "Too many cabal files found"
 
 checkRoute :: String -> AddHandlerConfig -> IO (Either RouteError (String, FilePath))
-checkRoute name AddHandlerConfig{ handlerDir } =
+checkRoute name AddHandlerConfig{..} =
     case name of
         [] -> return $ Left EmptyRoute
         c:_
@@ -157,29 +157,29 @@ checkConfig AddHandlerConfig{..} = do
 
     where
       addTrailingSlash s | '/' == last s = s
-                         | otherwise     = s `mappend` "/"
+                         | otherwise     = s <> "/"
       handlerDir'     = addTrailingSlash handlerDir
       testHandlerDir' = addTrailingSlash testHandlerDir
       valididateHandlerDir = do
         exists <- lift $ doesDirectoryExist handlerDir'
         if exists
            then return ()
-           else throwE $ HandlerDirNotExists handlerDir'
+           else throwE $ HandlerDirNotExists      { path = handlerDir' }
       valididateApplicationFile = do
         exists <- lift $ doesFileExist applicationFile
         if exists
            then return ()
-           else throwE $ ApplicationFileNotExists applicationFile
+           else throwE $ ApplicationFileNotExists { path = applicationFile }
       valididateRoutesFile = do
         exists <- lift $ doesFileExist routesFile
         if exists
            then return ()
-           else throwE $ RoutesFileNotExists routesFile
+           else throwE $ RoutesFileNotExists      { path = routesFile }
       valididateTestHandlerDir = do
         exists <- lift $ doesDirectoryExist testHandlerDir'
         if exists
            then return ()
-           else throwE $ TestHandlerDirNotExists testHandlerDir'
+           else throwE $ TestHandlerDirNotExists  { path = testHandlerDir' }
 
 fixApp :: String -> String -> String
 fixApp name =
