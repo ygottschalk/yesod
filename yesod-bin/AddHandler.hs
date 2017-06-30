@@ -13,6 +13,8 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import System.Directory (getDirectoryContents, doesFileExist, doesDirectoryExist)
 import Control.Monad (unless)
+import Control.Monad.Trans.Except (ExceptT, throwE, runExceptT)
+import Control.Monad.Trans.Class  (lift)
 
 data RouteError = EmptyRoute
                 | RouteCaseError
@@ -33,11 +35,22 @@ data AddHandlerConfig = AddHandlerConfig
                       } deriving (Show, Eq)
 
 instance Default AddHandlerConfig where
-        def = AddHandlerConfig { handlerDir      = "Handler/"
-                               , applicationFile = "Application.hs"
-                               , routesFile      = "config/routes"
-                               , testHandlerDir  = "test/Handler/"
-                               }
+    def = AddHandlerConfig { handlerDir      = "Handler/"
+                           , applicationFile = "Application.hs"
+                           , routesFile      = "config/routes"
+                           , testHandlerDir  = "test/Handler/"
+                           }
+data ConfigError = HandlerDirNotExists      { errMsg :: String }
+                 | ApplicationFileNotExists { errMsg :: String }
+                 | RoutesFileNotExists      { errMsg :: String }
+                 | TestHandlerDirNotExists  { errMsg :: String }
+
+instance Show ConfigError where
+    show (HandlerDirNotExists      dir)  = "Handler Directory does not exist '" ++ dir ++ "'"
+    show (ApplicationFileNotExists file) = "Application file does not exist '" ++ file ++ "'"
+    show (RoutesFileNotExists      file) = "Routes file does not exist '" ++ file ++ "'"
+    show (TestHandlerDirNotExists  dir)  = "Test Handler Directory does not exist '" ++ dir ++ "'"
+
 
 -- strict readFile
 readFile :: FilePath -> IO String
@@ -47,8 +60,11 @@ cmdLineArgsError :: String
 cmdLineArgsError = "You have to specify a route name if you want to add handler with command line arguments."
 
 addHandler :: Maybe String -> Maybe String -> [String] -> AddHandlerConfig -> IO ()
-addHandler (Just route) pat met config = do
-    _ <- checkConfig config
+addHandler (Just route) pat met conf = do
+    checkedConfig <- runExceptT $ checkConfig conf
+    let config = case checkedConfig of
+          Left err    -> (error . show) err
+          Right conf' -> conf'
     cabal <- getCabal
     checked <- checkRoute route config
     let routePair = case checked of
@@ -56,7 +72,6 @@ addHandler (Just route) pat met config = do
           Left err@RouteCaseError -> (error . show) err
           Left err@(RouteExists _) -> (error . show) err
           Right p -> p
-
     addHandlerFiles cabal routePair pattern methods config
   where
     pattern = fromMaybe "" pat -- pattern defaults to ""
@@ -130,36 +145,41 @@ checkRoute name AddHandlerConfig{ handlerDir } =
 
 -- This will check the config and return it untouched
 -- or crashes with an error message
-checkConfig :: AddHandlerConfig -> IO AddHandlerConfig
+checkConfig :: AddHandlerConfig -> ExceptT ConfigError IO AddHandlerConfig
 checkConfig AddHandlerConfig{..} = do
     valididateHandlerDir
     valididateRoutesFile
     valididateApplicationFile
     valididateTestHandlerDir
-    return AddHandlerConfig{..}
+    return AddHandlerConfig{ handlerDir     = handlerDir'
+                           , testHandlerDir = testHandlerDir'
+                           , ..}
 
     where
-      (<>) = mappend
+      addTrailingSlash s | '/' == last s = s
+                         | otherwise     = s `mappend` "/"
+      handlerDir'     = addTrailingSlash handlerDir
+      testHandlerDir' = addTrailingSlash testHandlerDir
       valididateHandlerDir = do
-        exists <- doesDirectoryExist handlerDir
-        if exists && '/' == last handlerDir
+        exists <- lift $ doesDirectoryExist handlerDir'
+        if exists
            then return ()
-           else error $ "Handler Directory does not exist or is maleformed (missing a trailing / ?) '" <> handlerDir <> "'"
+           else throwE $ HandlerDirNotExists handlerDir'
       valididateApplicationFile = do
-        exists <- doesFileExist applicationFile
+        exists <- lift $ doesFileExist applicationFile
         if exists
            then return ()
-           else error $ "Application file does not exist '" <> applicationFile <> "'"
+           else throwE $ ApplicationFileNotExists applicationFile
       valididateRoutesFile = do
-        exists <- doesFileExist routesFile
+        exists <- lift $ doesFileExist routesFile
         if exists
            then return ()
-           else error $ "Routes file does not exist '" <> routesFile <> "'"
+           else throwE $ RoutesFileNotExists routesFile
       valididateTestHandlerDir = do
-        exists <- doesDirectoryExist testHandlerDir
-        if exists && '/' == last testHandlerDir
+        exists <- lift $ doesDirectoryExist testHandlerDir'
+        if exists
            then return ()
-           else error $ "Test Handler Directory does not exist or is maleformed (missing a trailing / ?) '" <> testHandlerDir <> "'"
+           else throwE $ TestHandlerDirNotExists testHandlerDir'
 
 fixApp :: String -> String -> String
 fixApp name =
