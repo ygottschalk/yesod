@@ -40,10 +40,10 @@ instance Default AddHandlerConfig where
                            , routesFile      = "config/routes"
                            , testHandlerDir  = "test/Handler/"
                            }
-data ConfigError = HandlerDirNotExists      { errMsg :: String }
-                 | ApplicationFileNotExists { errMsg :: String }
-                 | RoutesFileNotExists      { errMsg :: String }
-                 | TestHandlerDirNotExists  { errMsg :: String }
+data ConfigError = HandlerDirNotExists      { path :: String }
+                 | ApplicationFileNotExists { path :: String }
+                 | RoutesFileNotExists      { path :: String }
+                 | TestHandlerDirNotExists  { path :: String }
 
 instance Show ConfigError where
     show (HandlerDirNotExists      dir)  = "Handler Directory does not exist '" ++ dir ++ "'"
